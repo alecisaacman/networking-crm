@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+*.pyd
+
+runtime/state/*.db
+runtime/logs/*
+runtime/artifacts/*
+
+!.gitkeep
