@@ -1,8 +1,18 @@
 import argparse
+from datetime import date
 from pathlib import Path
 from typing import List, Optional
 
-from .db import add_contact, add_note, contact_exists, initialize_database, list_contacts
+from .db import (
+    add_contact,
+    add_followup,
+    add_note,
+    contact_exists,
+    initialize_database,
+    list_contacts,
+    list_due_followups,
+    list_followups,
+)
 from .paths import DB_PATH
 
 
@@ -31,6 +41,14 @@ def build_parser() -> argparse.ArgumentParser:
     add_note_parser.add_argument("--contact-id", type=int, required=True, help="Existing contact id.")
     add_note_parser.add_argument("--body", required=True, help="Note text.")
 
+    add_followup_parser = subparsers.add_parser("add-followup", help="Add a follow-up for a contact.")
+    add_followup_parser.add_argument("--contact-id", type=int, required=True, help="Existing contact id.")
+    add_followup_parser.add_argument("--due-on", required=True, help="Due date in YYYY-MM-DD format.")
+    add_followup_parser.add_argument("--reason", help="Reason or context for the follow-up.")
+
+    subparsers.add_parser("list-followups", help="List saved follow-ups.")
+    subparsers.add_parser("due", help="Show overdue and today's pending follow-ups.")
+
     return parser
 
 
@@ -45,7 +63,10 @@ def handle_status(db_path: Path = DB_PATH) -> int:
     print("Project: networking-crm")
     print(f"Database: {db_path}")
     print(f"Database initialized: {'yes' if exists else 'no'}")
-    print("Current commands: init-db, status, add-contact, list-contacts, add-note.")
+    print(
+        "Current commands: init-db, status, add-contact, list-contacts, add-note, "
+        "add-followup, list-followups, due."
+    )
     return 0
 
 
@@ -103,6 +124,57 @@ def handle_add_note(args: argparse.Namespace, db_path: Path = DB_PATH) -> int:
     return 0
 
 
+def render_followups(followups: list[object]) -> int:
+    for followup in followups:
+        summary_parts = [
+            f"#{followup['id']}",
+            f"contact=#{followup['contact_id']}",
+            followup["full_name"],
+            f"due={followup['due_on']}",
+        ]
+        print(" | ".join(summary_parts))
+
+        detail_parts = [f"status={followup['status']}"]
+        if followup["reason"]:
+            detail_parts.append(f"reason={followup['reason']}")
+        print(f"  {'; '.join(detail_parts)}")
+
+    return 0
+
+
+def handle_add_followup(args: argparse.Namespace, db_path: Path = DB_PATH) -> int:
+    if not contact_exists(args.contact_id, db_path=db_path):
+        print(f"Contact #{args.contact_id} does not exist.")
+        return 1
+
+    followup_id = add_followup(
+        contact_id=args.contact_id,
+        due_on=args.due_on,
+        reason=args.reason,
+        db_path=db_path,
+    )
+    print(f"Added follow-up #{followup_id} to contact #{args.contact_id}")
+    return 0
+
+
+def handle_list_followups(db_path: Path = DB_PATH) -> int:
+    followups = list_followups(db_path=db_path)
+    if not followups:
+        print("No follow-ups found.")
+        return 0
+
+    return render_followups(followups)
+
+
+def handle_due(db_path: Path = DB_PATH) -> int:
+    followups = list_due_followups(today=date.today().isoformat(), db_path=db_path)
+    if not followups:
+        print("No follow-ups due.")
+        return 0
+
+    return render_followups(followups)
+
+
 def main(argv: Optional[List[str]] = None, db_path: Path = DB_PATH) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -117,6 +189,12 @@ def main(argv: Optional[List[str]] = None, db_path: Path = DB_PATH) -> int:
         return handle_list_contacts(db_path=db_path)
     if args.command == "add-note":
         return handle_add_note(args, db_path=db_path)
+    if args.command == "add-followup":
+        return handle_add_followup(args, db_path=db_path)
+    if args.command == "list-followups":
+        return handle_list_followups(db_path=db_path)
+    if args.command == "due":
+        return handle_due(db_path=db_path)
 
     parser.error(f"Unknown command: {args.command}")
     return 2

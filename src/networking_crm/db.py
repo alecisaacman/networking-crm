@@ -109,3 +109,63 @@ def list_notes_for_contact(contact_id: int, db_path: Path = DB_PATH) -> list[sql
             (contact_id,),
         )
         return list(cursor.fetchall())
+
+
+def add_followup(
+    contact_id: int,
+    due_on: str,
+    reason: Optional[str] = None,
+    db_path: Path = DB_PATH,
+) -> int:
+    with get_connection(db_path) as connection:
+        cursor = connection.execute(
+            "insert into follow_ups (contact_id, due_on, reason) values (?, ?, ?)",
+            (contact_id, due_on, reason),
+        )
+        connection.commit()
+        return int(cursor.lastrowid)
+
+
+def list_followups(db_path: Path = DB_PATH) -> list[sqlite3.Row]:
+    with get_connection(db_path) as connection:
+        cursor = connection.execute(
+            """
+            select
+                follow_ups.id,
+                follow_ups.contact_id,
+                contacts.full_name,
+                follow_ups.due_on,
+                follow_ups.status,
+                follow_ups.reason,
+                follow_ups.created_at,
+                follow_ups.completed_at
+            from follow_ups
+            join contacts on contacts.id = follow_ups.contact_id
+            order by follow_ups.due_on asc, follow_ups.id asc
+            """
+        )
+        return list(cursor.fetchall())
+
+
+def list_due_followups(today: str, db_path: Path = DB_PATH) -> list[sqlite3.Row]:
+    with get_connection(db_path) as connection:
+        cursor = connection.execute(
+            """
+            select
+                follow_ups.id,
+                follow_ups.contact_id,
+                contacts.full_name,
+                follow_ups.due_on,
+                follow_ups.status,
+                follow_ups.reason,
+                follow_ups.created_at,
+                follow_ups.completed_at
+            from follow_ups
+            join contacts on contacts.id = follow_ups.contact_id
+            where follow_ups.status = 'pending'
+              and follow_ups.due_on <= ?
+            order by follow_ups.due_on asc, follow_ups.id asc
+            """,
+            (today,),
+        )
+        return list(cursor.fetchall())
