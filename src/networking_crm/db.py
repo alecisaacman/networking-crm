@@ -23,8 +23,26 @@ def initialize_database(db_path: Path = DB_PATH, schema_path: Path = SCHEMA_PATH
     schema_sql = schema_path.read_text(encoding="utf-8")
     with get_connection(db_path) as connection:
         connection.executescript(schema_sql)
+        _ensure_followups_completed_at_column(connection)
         connection.commit()
     return db_path
+
+
+def _ensure_followups_completed_at_column(connection: sqlite3.Connection) -> None:
+    followups_table = connection.execute(
+        """
+        select 1
+        from sqlite_master
+        where type = 'table' and name = 'follow_ups'
+        """
+    ).fetchone()
+    if followups_table is None:
+        return
+
+    columns = connection.execute("pragma table_info(follow_ups)").fetchall()
+    column_names = {column["name"] for column in columns}
+    if "completed_at" not in column_names:
+        connection.execute("alter table follow_ups add column completed_at text")
 
 
 def add_contact(
@@ -87,6 +105,29 @@ def contact_exists(contact_id: int, db_path: Path = DB_PATH) -> bool:
     return row is not None
 
 
+def get_contact(contact_id: int, db_path: Path = DB_PATH) -> Optional[sqlite3.Row]:
+    with get_connection(db_path) as connection:
+        row = connection.execute(
+            """
+            select
+                id,
+                full_name,
+                company,
+                role_title,
+                location,
+                source,
+                email,
+                linkedin_url,
+                created_at,
+                updated_at
+            from contacts
+            where id = ?
+            """,
+            (contact_id,),
+        ).fetchone()
+    return row
+
+
 def add_note(contact_id: int, body: str, db_path: Path = DB_PATH) -> int:
     with get_connection(db_path) as connection:
         cursor = connection.execute(
@@ -124,6 +165,29 @@ def add_followup(
         )
         connection.commit()
         return int(cursor.lastrowid)
+
+
+def followup_exists(followup_id: int, db_path: Path = DB_PATH) -> bool:
+    with get_connection(db_path) as connection:
+        row = connection.execute(
+            "select 1 from follow_ups where id = ?",
+            (followup_id,),
+        ).fetchone()
+    return row is not None
+
+
+def complete_followup(followup_id: int, db_path: Path = DB_PATH) -> None:
+    with get_connection(db_path) as connection:
+        connection.execute(
+            """
+            update follow_ups
+            set status = 'completed',
+                completed_at = current_timestamp
+            where id = ?
+            """,
+            (followup_id,),
+        )
+        connection.commit()
 
 
 def list_followups(db_path: Path = DB_PATH) -> list[sqlite3.Row]:
@@ -167,5 +231,48 @@ def list_due_followups(today: str, db_path: Path = DB_PATH) -> list[sqlite3.Row]
             order by follow_ups.due_on asc, follow_ups.id asc
             """,
             (today,),
+        )
+        return list(cursor.fetchall())
+
+
+def list_pending_followups(db_path: Path = DB_PATH) -> list[sqlite3.Row]:
+    with get_connection(db_path) as connection:
+        cursor = connection.execute(
+            """
+            select
+                follow_ups.id,
+                follow_ups.contact_id,
+                contacts.full_name,
+                follow_ups.due_on,
+                follow_ups.status,
+                follow_ups.reason,
+                follow_ups.created_at,
+                follow_ups.completed_at
+            from follow_ups
+            join contacts on contacts.id = follow_ups.contact_id
+            where follow_ups.status = 'pending'
+            order by follow_ups.due_on asc, follow_ups.id asc
+            """
+        )
+        return list(cursor.fetchall())
+
+
+def list_followups_for_contact(contact_id: int, db_path: Path = DB_PATH) -> list[sqlite3.Row]:
+    with get_connection(db_path) as connection:
+        cursor = connection.execute(
+            """
+            select
+                id,
+                contact_id,
+                due_on,
+                status,
+                reason,
+                created_at,
+                completed_at
+            from follow_ups
+            where contact_id = ?
+            order by due_on asc, id asc
+            """,
+            (contact_id,),
         )
         return list(cursor.fetchall())

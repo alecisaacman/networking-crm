@@ -1,5 +1,5 @@
 import argparse
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import List, Optional
 
@@ -7,11 +7,17 @@ from .db import (
     add_contact,
     add_followup,
     add_note,
+    complete_followup,
     contact_exists,
+    followup_exists,
+    get_contact,
     initialize_database,
     list_contacts,
     list_due_followups,
     list_followups,
+    list_followups_for_contact,
+    list_notes_for_contact,
+    list_pending_followups,
 )
 from .paths import DB_PATH
 
@@ -47,7 +53,15 @@ def build_parser() -> argparse.ArgumentParser:
     add_followup_parser.add_argument("--reason", help="Reason or context for the follow-up.")
 
     subparsers.add_parser("list-followups", help="List saved follow-ups.")
+    complete_followup_parser = subparsers.add_parser(
+        "complete-followup",
+        help="Mark a follow-up as completed.",
+    )
+    complete_followup_parser.add_argument("--id", type=int, required=True, help="Existing follow-up id.")
+    show_contact_parser = subparsers.add_parser("show-contact", help="Show a contact with notes and follow-ups.")
+    show_contact_parser.add_argument("--id", type=int, required=True, help="Existing contact id.")
     subparsers.add_parser("due", help="Show overdue and today's pending follow-ups.")
+    subparsers.add_parser("today", help="Show today's follow-up summary.")
 
     return parser
 
@@ -65,7 +79,7 @@ def handle_status(db_path: Path = DB_PATH) -> int:
     print(f"Database initialized: {'yes' if exists else 'no'}")
     print(
         "Current commands: init-db, status, add-contact, list-contacts, add-note, "
-        "add-followup, list-followups, due."
+        "add-followup, list-followups, complete-followup, show-contact, due, today."
     )
     return 0
 
@@ -166,6 +180,67 @@ def handle_list_followups(db_path: Path = DB_PATH) -> int:
     return render_followups(followups)
 
 
+def handle_complete_followup(args: argparse.Namespace, db_path: Path = DB_PATH) -> int:
+    if not followup_exists(args.id, db_path=db_path):
+        print(f"Follow-up #{args.id} does not exist.")
+        return 1
+
+    complete_followup(followup_id=args.id, db_path=db_path)
+    print(f"Completed follow-up #{args.id}")
+    return 0
+
+
+def handle_show_contact(args: argparse.Namespace, db_path: Path = DB_PATH) -> int:
+    contact = get_contact(args.id, db_path=db_path)
+    if contact is None:
+        print(f"Contact #{args.id} does not exist.")
+        return 1
+
+    notes = list_notes_for_contact(contact_id=args.id, db_path=db_path)
+    followups = list_followups_for_contact(contact_id=args.id, db_path=db_path)
+
+    print(f"Contact #{contact['id']}: {contact['full_name']}")
+    detail_fields = (
+        ("Company", contact["company"]),
+        ("Role", contact["role_title"]),
+        ("Location", contact["location"]),
+        ("Source", contact["source"]),
+        ("Email", contact["email"]),
+        ("LinkedIn", contact["linkedin_url"]),
+        ("Created", contact["created_at"]),
+        ("Updated", contact["updated_at"]),
+    )
+    for label, value in detail_fields:
+        if value:
+            print(f"  {label}: {value}")
+
+    print("")
+    print("Notes:")
+    if not notes:
+        print("  None")
+    else:
+        for note in notes:
+            print(f"  - #{note['id']} [{note['created_at']}] {note['body']}")
+
+    print("")
+    print("Follow-ups:")
+    if not followups:
+        print("  None")
+    else:
+        for followup in followups:
+            summary = (
+                f"  - #{followup['id']} due={followup['due_on']} "
+                f"status={followup['status']}"
+            )
+            print(summary)
+            if followup["reason"]:
+                print(f"    reason: {followup['reason']}")
+            if followup["completed_at"]:
+                print(f"    completed_at: {followup['completed_at']}")
+
+    return 0
+
+
 def handle_due(db_path: Path = DB_PATH) -> int:
     followups = list_due_followups(today=date.today().isoformat(), db_path=db_path)
     if not followups:
@@ -173,6 +248,49 @@ def handle_due(db_path: Path = DB_PATH) -> int:
         return 0
 
     return render_followups(followups)
+
+
+def render_today_section(title: str, followups: list[object]) -> None:
+    print(title)
+    if not followups:
+        print("  none")
+        return
+
+    for followup in followups:
+        summary_parts = [
+            f"contact=#{followup['contact_id']}",
+            followup["full_name"],
+            f"due={followup['due_on']}",
+        ]
+        if followup["reason"]:
+            summary_parts.append(f"reason={followup['reason']}")
+        print(f"  {' | '.join(summary_parts)}")
+
+
+def handle_today(db_path: Path = DB_PATH) -> int:
+    today_value = date.today()
+    today_iso = today_value.isoformat()
+    upcoming_cutoff = today_value + timedelta(days=7)
+    upcoming_cutoff_iso = upcoming_cutoff.isoformat()
+    pending_followups = list_pending_followups(db_path=db_path)
+
+    overdue = [followup for followup in pending_followups if followup["due_on"] < today_iso]
+    due_today = [followup for followup in pending_followups if followup["due_on"] == today_iso]
+    upcoming = [
+        followup
+        for followup in pending_followups
+        if today_iso < followup["due_on"] <= upcoming_cutoff_iso
+    ]
+
+    print("Today")
+    print(f"Pending follow-ups: {len(pending_followups)}")
+    print("")
+    render_today_section("Overdue", overdue)
+    print("")
+    render_today_section("Due Today", due_today)
+    print("")
+    render_today_section("Upcoming (Next 7 Days)", upcoming)
+    return 0
 
 
 def main(argv: Optional[List[str]] = None, db_path: Path = DB_PATH) -> int:
@@ -193,8 +311,14 @@ def main(argv: Optional[List[str]] = None, db_path: Path = DB_PATH) -> int:
         return handle_add_followup(args, db_path=db_path)
     if args.command == "list-followups":
         return handle_list_followups(db_path=db_path)
+    if args.command == "complete-followup":
+        return handle_complete_followup(args, db_path=db_path)
+    if args.command == "show-contact":
+        return handle_show_contact(args, db_path=db_path)
     if args.command == "due":
         return handle_due(db_path=db_path)
+    if args.command == "today":
+        return handle_today(db_path=db_path)
 
     parser.error(f"Unknown command: {args.command}")
     return 2

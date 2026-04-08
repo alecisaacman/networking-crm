@@ -2,6 +2,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from datetime import date as real_date
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
@@ -13,7 +14,11 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from networking_crm.db import initialize_database, list_notes_for_contact
+from networking_crm.db import (
+    get_connection,
+    initialize_database,
+    list_notes_for_contact,
+)
 from networking_crm.main import main
 
 
@@ -261,6 +266,281 @@ class DatabaseBootstrapTest(unittest.TestCase):
             self.assertIn("#1 | contact=#1 | Margaret Hamilton | due=2026-04-06", rendered)
             self.assertIn("#2 | contact=#1 | Margaret Hamilton | due=2026-04-07", rendered)
             self.assertNotIn("due=2026-04-08", rendered)
+
+    def test_today_command_groups_overdue_due_today_and_upcoming(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            db_path = tmp_path / "networking.db"
+            schema_path = ROOT / "config" / "schema.sql"
+            initialize_database(db_path=db_path, schema_path=schema_path)
+            main(["add-contact", "--name", "Annie Easley"], db_path=db_path)
+            main(["add-contact", "--name", "Mary Jackson"], db_path=db_path)
+            main(
+                [
+                    "add-followup",
+                    "--contact-id",
+                    "1",
+                    "--due-on",
+                    "2026-04-05",
+                    "--reason",
+                    "Past due intro.",
+                ],
+                db_path=db_path,
+            )
+            main(
+                [
+                    "add-followup",
+                    "--contact-id",
+                    "2",
+                    "--due-on",
+                    "2026-04-07",
+                    "--reason",
+                    "Reply today.",
+                ],
+                db_path=db_path,
+            )
+            main(
+                [
+                    "add-followup",
+                    "--contact-id",
+                    "1",
+                    "--due-on",
+                    "2026-04-09",
+                    "--reason",
+                    "Schedule coffee.",
+                ],
+                db_path=db_path,
+            )
+            main(
+                [
+                    "add-followup",
+                    "--contact-id",
+                    "2",
+                    "--due-on",
+                    "2026-04-14",
+                    "--reason",
+                    "Still in window.",
+                ],
+                db_path=db_path,
+            )
+            main(
+                [
+                    "add-followup",
+                    "--contact-id",
+                    "1",
+                    "--due-on",
+                    "2026-04-15",
+                    "--reason",
+                    "Outside window.",
+                ],
+                db_path=db_path,
+            )
+
+            today_output = StringIO()
+            with patch("networking_crm.main.date") as mock_date:
+                mock_date.today.return_value = real_date(2026, 4, 7)
+                with redirect_stdout(today_output):
+                    exit_code = main(["today"], db_path=db_path)
+
+            rendered = today_output.getvalue()
+            self.assertEqual(exit_code, 0)
+            self.assertIn("Today", rendered)
+            self.assertIn("Pending follow-ups: 5", rendered)
+            self.assertIn("Overdue", rendered)
+            self.assertIn("contact=#1 | Annie Easley | due=2026-04-05 | reason=Past due intro.", rendered)
+            self.assertIn("Due Today", rendered)
+            self.assertIn("contact=#2 | Mary Jackson | due=2026-04-07 | reason=Reply today.", rendered)
+            self.assertIn("Upcoming (Next 7 Days)", rendered)
+            self.assertIn("contact=#1 | Annie Easley | due=2026-04-09 | reason=Schedule coffee.", rendered)
+            self.assertIn("contact=#2 | Mary Jackson | due=2026-04-14 | reason=Still in window.", rendered)
+            self.assertNotIn("due=2026-04-15", rendered)
+
+    def test_today_command_excludes_completed_followups(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            db_path = tmp_path / "networking.db"
+            schema_path = ROOT / "config" / "schema.sql"
+            initialize_database(db_path=db_path, schema_path=schema_path)
+            main(["add-contact", "--name", "Edsger Dijkstra"], db_path=db_path)
+            main(
+                [
+                    "add-followup",
+                    "--contact-id",
+                    "1",
+                    "--due-on",
+                    "2026-04-06",
+                    "--reason",
+                    "Should disappear.",
+                ],
+                db_path=db_path,
+            )
+            main(
+                [
+                    "add-followup",
+                    "--contact-id",
+                    "1",
+                    "--due-on",
+                    "2026-04-08",
+                    "--reason",
+                    "Still pending.",
+                ],
+                db_path=db_path,
+            )
+            main(["complete-followup", "--id", "1"], db_path=db_path)
+
+            today_output = StringIO()
+            with patch("networking_crm.main.date") as mock_date:
+                mock_date.today.return_value = real_date(2026, 4, 7)
+                with redirect_stdout(today_output):
+                    exit_code = main(["today"], db_path=db_path)
+
+            rendered = today_output.getvalue()
+            self.assertEqual(exit_code, 0)
+            self.assertIn("Pending follow-ups: 1", rendered)
+            self.assertNotIn("Should disappear.", rendered)
+            self.assertIn("Still pending.", rendered)
+
+    def test_today_command_empty_state_is_clean(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            db_path = tmp_path / "networking.db"
+            schema_path = ROOT / "config" / "schema.sql"
+            initialize_database(db_path=db_path, schema_path=schema_path)
+
+            today_output = StringIO()
+            with patch("networking_crm.main.date") as mock_date:
+                mock_date.today.return_value = real_date(2026, 4, 7)
+                with redirect_stdout(today_output):
+                    exit_code = main(["today"], db_path=db_path)
+
+            rendered = today_output.getvalue()
+            self.assertEqual(exit_code, 0)
+            self.assertIn("Pending follow-ups: 0", rendered)
+            self.assertIn("Overdue\n  none", rendered)
+            self.assertIn("Due Today\n  none", rendered)
+            self.assertIn("Upcoming (Next 7 Days)\n  none", rendered)
+
+    def test_complete_followup_marks_status_and_completed_at(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            db_path = tmp_path / "networking.db"
+            schema_path = ROOT / "config" / "schema.sql"
+            initialize_database(db_path=db_path, schema_path=schema_path)
+            main(["add-contact", "--name", "Barbara Liskov"], db_path=db_path)
+            main(
+                [
+                    "add-followup",
+                    "--contact-id",
+                    "1",
+                    "--due-on",
+                    "2026-04-10",
+                    "--reason",
+                    "Send follow-up note.",
+                ],
+                db_path=db_path,
+            )
+
+            complete_output = StringIO()
+            with redirect_stdout(complete_output):
+                exit_code = main(["complete-followup", "--id", "1"], db_path=db_path)
+
+            self.assertEqual(exit_code, 0)
+            self.assertIn("Completed follow-up #1", complete_output.getvalue())
+
+            with get_connection(db_path) as connection:
+                followup = connection.execute(
+                    """
+                    select status, completed_at, due_on, reason
+                    from follow_ups
+                    where id = 1
+                    """
+                ).fetchone()
+
+            self.assertEqual(followup["status"], "completed")
+            self.assertIsNotNone(followup["completed_at"])
+            self.assertEqual(followup["due_on"], "2026-04-10")
+            self.assertEqual(followup["reason"], "Send follow-up note.")
+
+    def test_complete_followup_rejects_unknown_followup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            db_path = tmp_path / "networking.db"
+            schema_path = ROOT / "config" / "schema.sql"
+            initialize_database(db_path=db_path, schema_path=schema_path)
+
+            complete_output = StringIO()
+            with redirect_stdout(complete_output):
+                exit_code = main(["complete-followup", "--id", "999"], db_path=db_path)
+
+            self.assertEqual(exit_code, 1)
+            self.assertIn("Follow-up #999 does not exist.", complete_output.getvalue())
+
+    def test_show_contact_displays_notes_and_followups_with_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            db_path = tmp_path / "networking.db"
+            schema_path = ROOT / "config" / "schema.sql"
+            initialize_database(db_path=db_path, schema_path=schema_path)
+            main(
+                [
+                    "add-contact",
+                    "--name",
+                    "Radia Perlman",
+                    "--company",
+                    "Sun Microsystems",
+                    "--role",
+                    "Engineer",
+                    "--email",
+                    "radia@example.com",
+                ],
+                db_path=db_path,
+            )
+            main(
+                ["add-note", "--contact-id", "1", "--body", "Discussed distributed systems."],
+                db_path=db_path,
+            )
+            main(
+                [
+                    "add-followup",
+                    "--contact-id",
+                    "1",
+                    "--due-on",
+                    "2026-04-08",
+                    "--reason",
+                    "Send reading list.",
+                ],
+                db_path=db_path,
+            )
+            main(
+                [
+                    "add-followup",
+                    "--contact-id",
+                    "1",
+                    "--due-on",
+                    "2026-04-09",
+                    "--reason",
+                    "Check in after intro.",
+                ],
+                db_path=db_path,
+            )
+            main(["complete-followup", "--id", "2"], db_path=db_path)
+
+            show_output = StringIO()
+            with redirect_stdout(show_output):
+                exit_code = main(["show-contact", "--id", "1"], db_path=db_path)
+
+            rendered = show_output.getvalue()
+            self.assertEqual(exit_code, 0)
+            self.assertIn("Contact #1: Radia Perlman", rendered)
+            self.assertIn("  Company: Sun Microsystems", rendered)
+            self.assertIn("  Role: Engineer", rendered)
+            self.assertIn("  Email: radia@example.com", rendered)
+            self.assertIn("Notes:", rendered)
+            self.assertIn("Discussed distributed systems.", rendered)
+            self.assertIn("Follow-ups:", rendered)
+            self.assertIn("  - #1 due=2026-04-08 status=pending", rendered)
+            self.assertIn("  - #2 due=2026-04-09 status=completed", rendered)
+            self.assertIn("    completed_at: ", rendered)
 
 
 if __name__ == "__main__":
