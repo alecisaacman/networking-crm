@@ -12,3 +12,4 @@ dependencies = []
 
 [project.scripts]
 networking-crm = "networking_crm.main:main"
+ari = "networking_crm.ari:main"

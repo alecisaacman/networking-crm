@@ -19,6 +19,7 @@ from networking_crm.db import (
     initialize_database,
     list_notes_for_contact,
 )
+from networking_crm.ari import main as ari_main
 from networking_crm.main import main
 
 
@@ -541,6 +542,104 @@ class DatabaseBootstrapTest(unittest.TestCase):
             self.assertIn("  - #1 due=2026-04-08 status=pending", rendered)
             self.assertIn("  - #2 due=2026-04-09 status=completed", rendered)
             self.assertIn("    completed_at: ", rendered)
+
+    def test_ari_today_delegates_to_existing_today_behavior(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            db_path = tmp_path / "networking.db"
+            schema_path = ROOT / "config" / "schema.sql"
+            initialize_database(db_path=db_path, schema_path=schema_path)
+            main(["add-contact", "--name", "Annie Easley"], db_path=db_path)
+            main(
+                [
+                    "add-followup",
+                    "--contact-id",
+                    "1",
+                    "--due-on",
+                    "2026-04-07",
+                    "--reason",
+                    "Reply today.",
+                ],
+                db_path=db_path,
+            )
+
+            output = StringIO()
+            with patch("networking_crm.main.date") as mock_date:
+                mock_date.today.return_value = real_date(2026, 4, 7)
+                with redirect_stdout(output):
+                    exit_code = ari_main(["today"], db_path=db_path)
+
+            rendered = output.getvalue()
+            self.assertEqual(exit_code, 0)
+            self.assertIn("Today", rendered)
+            self.assertIn("Reply today.", rendered)
+
+    def test_ari_contacts_list_delegates_to_existing_list_behavior(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            db_path = tmp_path / "networking.db"
+            schema_path = ROOT / "config" / "schema.sql"
+            initialize_database(db_path=db_path, schema_path=schema_path)
+            main(["add-contact", "--name", "Ada Lovelace"], db_path=db_path)
+
+            output = StringIO()
+            with redirect_stdout(output):
+                exit_code = ari_main(["contacts", "list"], db_path=db_path)
+
+            rendered = output.getvalue()
+            self.assertEqual(exit_code, 0)
+            self.assertIn("#1 | Ada Lovelace", rendered)
+
+    def test_ari_contacts_show_delegates_to_existing_show_behavior(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            db_path = tmp_path / "networking.db"
+            schema_path = ROOT / "config" / "schema.sql"
+            initialize_database(db_path=db_path, schema_path=schema_path)
+            main(["add-contact", "--name", "Grace Hopper"], db_path=db_path)
+            main(
+                ["add-note", "--contact-id", "1", "--body", "Met at systems meetup."],
+                db_path=db_path,
+            )
+
+            output = StringIO()
+            with redirect_stdout(output):
+                exit_code = ari_main(["contacts", "show", "--id", "1"], db_path=db_path)
+
+            rendered = output.getvalue()
+            self.assertEqual(exit_code, 0)
+            self.assertIn("Contact #1: Grace Hopper", rendered)
+            self.assertIn("Met at systems meetup.", rendered)
+
+    def test_ari_followups_due_delegates_to_existing_due_behavior(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            db_path = tmp_path / "networking.db"
+            schema_path = ROOT / "config" / "schema.sql"
+            initialize_database(db_path=db_path, schema_path=schema_path)
+            main(["add-contact", "--name", "Margaret Hamilton"], db_path=db_path)
+            main(
+                [
+                    "add-followup",
+                    "--contact-id",
+                    "1",
+                    "--due-on",
+                    "2026-04-07",
+                    "--reason",
+                    "Due today.",
+                ],
+                db_path=db_path,
+            )
+
+            output = StringIO()
+            with patch("networking_crm.main.date") as mock_date:
+                mock_date.today.return_value.isoformat.return_value = "2026-04-07"
+                with redirect_stdout(output):
+                    exit_code = ari_main(["followups", "due"], db_path=db_path)
+
+            rendered = output.getvalue()
+            self.assertEqual(exit_code, 0)
+            self.assertIn("#1 | contact=#1 | Margaret Hamilton | due=2026-04-07", rendered)
 
 
 if __name__ == "__main__":

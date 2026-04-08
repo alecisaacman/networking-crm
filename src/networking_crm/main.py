@@ -66,6 +66,34 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser, db_path: Path = DB_PATH) -> int:
+    if args.command == "init-db":
+        return handle_init_db(db_path=db_path)
+    if args.command == "status":
+        return handle_status(db_path=db_path)
+    if args.command == "add-contact":
+        return handle_add_contact(args, db_path=db_path)
+    if args.command == "list-contacts":
+        return handle_list_contacts(db_path=db_path)
+    if args.command == "add-note":
+        return handle_add_note(args, db_path=db_path)
+    if args.command == "add-followup":
+        return handle_add_followup(args, db_path=db_path)
+    if args.command == "list-followups":
+        return handle_list_followups(db_path=db_path)
+    if args.command == "complete-followup":
+        return handle_complete_followup(args, db_path=db_path)
+    if args.command == "show-contact":
+        return handle_show_contact(args, db_path=db_path)
+    if args.command == "due":
+        return handle_due(db_path=db_path)
+    if args.command == "today":
+        return handle_today(db_path=db_path)
+
+    parser.error(f"Unknown command: {args.command}")
+    return 2
+
+
 def handle_init_db(db_path: Path = DB_PATH) -> int:
     db_path = initialize_database(db_path=db_path)
     print(f"Initialized database at {db_path}")
@@ -296,32 +324,7 @@ def handle_today(db_path: Path = DB_PATH) -> int:
 def main(argv: Optional[List[str]] = None, db_path: Path = DB_PATH) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-
-    if args.command == "init-db":
-        return handle_init_db(db_path=db_path)
-    if args.command == "status":
-        return handle_status(db_path=db_path)
-    if args.command == "add-contact":
-        return handle_add_contact(args, db_path=db_path)
-    if args.command == "list-contacts":
-        return handle_list_contacts(db_path=db_path)
-    if args.command == "add-note":
-        return handle_add_note(args, db_path=db_path)
-    if args.command == "add-followup":
-        return handle_add_followup(args, db_path=db_path)
-    if args.command == "list-followups":
-        return handle_list_followups(db_path=db_path)
-    if args.command == "complete-followup":
-        return handle_complete_followup(args, db_path=db_path)
-    if args.command == "show-contact":
-        return handle_show_contact(args, db_path=db_path)
-    if args.command == "due":
-        return handle_due(db_path=db_path)
-    if args.command == "today":
-        return handle_today(db_path=db_path)
-
-    parser.error(f"Unknown command: {args.command}")
-    return 2
+    return dispatch(args, parser, db_path=db_path)
 
 
 if __name__ == "__main__":
