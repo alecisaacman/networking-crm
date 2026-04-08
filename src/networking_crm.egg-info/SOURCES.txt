@@ -1,0 +1,13 @@
+README.md
+pyproject.toml
+src/networking_crm/__init__.py
+src/networking_crm/__main__.py
+src/networking_crm/db.py
+src/networking_crm/main.py
+src/networking_crm/paths.py
+src/networking_crm.egg-info/PKG-INFO
+src/networking_crm.egg-info/SOURCES.txt
+src/networking_crm.egg-info/dependency_links.txt
+src/networking_crm.egg-info/entry_points.txt
+src/networking_crm.egg-info/top_level.txt
+tests/test_smoke.py

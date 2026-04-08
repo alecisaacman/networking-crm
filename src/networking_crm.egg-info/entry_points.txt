@@ -1,0 +1,2 @@
+[console_scripts]
+networking-crm = networking_crm.main:main
