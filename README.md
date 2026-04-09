@@ -1,8 +1,6 @@
 # networking-crm
 
-Local-first CLI tool to track networking contacts, notes, and follow-ups.
-
-Built with Python and SQLite. No external dependencies.
+Networking workflow module inside ARI for managing contacts, follow-ups, notes, and structured local activity.
 
 ---
 
